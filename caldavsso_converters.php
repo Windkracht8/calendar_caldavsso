@@ -163,10 +163,13 @@ class caldavsso_converters{
 			$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
 			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'FALSE';
 		}
+		//reset attendee status because the start and/or end time has changed
+		foreach($vevent->ATTENDEE as $attendee){$attendee['PARTSTAT'] = "NEEDS-ACTION";}
+
 		$vevent->DTSTAMP = gmdate("Ymd\THis\Z");
 		$vevent->{'LAST-MODIFIED'} = gmdate("Ymd\THis\Z");
 	}
-	
+
 	public static function vevent2driver($vevent, $cal_id, $id_mixed, $RRULE = null){
 		$driver_event = array();
 		$driver_event["calendar"] = $cal_id;

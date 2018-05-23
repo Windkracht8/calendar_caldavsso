@@ -7,7 +7,6 @@ use Sabre\VObject;
 
 class caldavsso_dav{
 	public static function upd_event_time($driver_event){
-		// TODO: when moving an event, reset the attendee status
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
 
@@ -74,7 +73,6 @@ class caldavsso_dav{
 	}
 	
 	public static function upd_event($driver_event){
-		// TODO: when moving an event, reset the attendee status
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
@@ -85,6 +83,12 @@ class caldavsso_dav{
 		$vevent = caldavsso_converters::driver2vevent($driver_event);
 		$vevent->UID = $vcal->VEVENT->UID;
 
+		if((string)$vcal->VEVENT->DTSTART != (string)$vevent->DTSTART || 
+			(string)$vcal->VEVENT->DTEND != (string)$vevent->DTEND){
+			//reset attendee status because the start and/or end time has changed
+			foreach($vevent->ATTENDEE as $attendee){$attendee['PARTSTAT'] = "NEEDS-ACTION";}
+		}
+		
 		switch($driver_event['_savemode']){
 			case "future":
 				foreach($vcal->VEVENT as $id => $vevent_loop){

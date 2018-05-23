@@ -324,7 +324,7 @@ class caldavsso_driver extends calendar_driver
 	 * @see calendar_driver::pending_alarms()
 	 */
 	public function pending_alarms($time, $calendars = null){
-		return array(); // TODO
+		return array(); // TODO pending_alarms
 	}
 
 	/**
@@ -333,7 +333,7 @@ class caldavsso_driver extends calendar_driver
 	 * @see calendar_driver::dismiss_alarm()
 	 */
 	public function dismiss_alarm($event_id, $snooze = 0){
-		return; // TODO
+		return; // TODO dismiss_alarm
 	}
 
 	/**
