@@ -10,7 +10,6 @@ Configure the calendar to use the driver by setting: $config['calendar_driver'] 
 Enable the calendar plugin.
 
 TODO:
- - Show alarms
- - Reset attendees status when updating event start or end
+ - Alarms
  - Search in event description
  
