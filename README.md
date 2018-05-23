@@ -1,4 +1,4 @@
-# caldavsso
+# calendar_caldavsso
 CalDAV driver for kolab/calendar with SSO option
 
 You need to manually install this. Copy the files to <roundcube_install>/plugins/calendar/drivers/caldavsso.
