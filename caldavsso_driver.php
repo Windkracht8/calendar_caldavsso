@@ -35,6 +35,9 @@ class caldavsso_driver extends calendar_driver
 		$cals = caldavsso_db::get_instance()->get_cals();
 
 		if(empty($cals)){
+			if(!isset(caldavsso_config::$DEFAULT_TASKLIST)){
+				return;
+			}
 			$default_cal = array(
 				'cal_id' => 0
 				,'name' => "My Calendar"
@@ -61,6 +64,7 @@ class caldavsso_driver extends calendar_driver
 				,'active' => true
 				,'group' => ""
 				,'editable' => $cal['dav_readonly'] != 1
+                ,'rights' => 'lrswikxteav'
 				,'default' => true
 				,'children' => false
 				,'dav_url' => $cal['dav_url']
@@ -69,14 +73,14 @@ class caldavsso_driver extends calendar_driver
 				,'dav_readonly' => $cal['dav_readonly']
 			);
 		}
-		
+
 		// append the virtual birthdays calendar
 		if($this->rc->config->get('calendar_contact_birthdays', false)){
 			$prefs = $this->rc->config->get('birthday_calendar', array('color' => '87CEFA'));
 			$hidden = array_filter(explode(',', $this->rc->config->get('hidden_calendars', '')));
 
 			$id = self::BIRTHDAY_CALENDAR_ID;
-			if(!$active || !in_array($id, $hidden)) {
+			if(!in_array($id, $hidden)) {
 				$this->calendars[$id] = array(
 				'id'         => $id,
 				'name'       => $this->cal->gettext('birthdays'),
@@ -195,7 +199,7 @@ class caldavsso_driver extends calendar_driver
 	public function edit_event($event, $old_event = null){
 		return caldavsso_dav::upd_event($event);
 	}
-	
+
 	/**
 	 * Extended event editing with possible changes to the argument
 	 *
@@ -264,6 +268,7 @@ class caldavsso_driver extends calendar_driver
 			// This is a meeting invite from an email message, search for the event in all calendars
 			$cal_id = -1;
 			foreach($this->calendars as $calendar){
+				if($calendar['id'] = self::BIRTHDAY_CALENDAR_ID){continue;}
 				if(caldavsso_dav::does_exists($calendar['id'], $event['uid'])){
 					$cal_id = $calendar['id'];
 					$id_mixed = $event['uid'];
@@ -303,7 +308,29 @@ class caldavsso_driver extends calendar_driver
 		if($calendar == self::BIRTHDAY_CALENDAR_ID){
 			return $this->load_birthday_events($start, $end, $query, $modifiedsince);
 		}
-		return caldavsso_dav::get_events($start, $end, $query, $calendar, $virtual, $modifiedsince);
+		$events = caldavsso_dav::get_events($start, $end, $query, $calendar, $virtual, $modifiedsince);
+		$start_dt = new DateTime();
+		$start_dt->setTimestamp($start);
+		$end_dt = new DateTime();
+		$end_dt->setTimestamp($end);
+		$exceptions = array();
+		foreach($events as $event){
+			if(isset($event["recurrence"]) && !isset($event["_instance"])){
+				$rec_events = self::get_recurring_events($event, $start_dt, $end_dt);
+				if(is_array($rec_events) && count($rec_events) > 0){
+					$events = array_merge($events, $rec_events);
+				}
+			}
+			if(isset($event["isexception"]) && $event["isexception"] == 1) $exceptions[] = $event["id"];
+		}
+		foreach($exceptions as $exception){
+			for($i=count($events)-1; $i>=0; $i--){
+				if($events[$i]["id"] == $exception && isset($events[$i]["isexception"]) && $events[$i]["isexception"] == 0){
+					unset($events[$i]);
+				}
+			}
+		}
+		return $events;
 	}
 
 	/**
@@ -343,6 +370,50 @@ class caldavsso_driver extends calendar_driver
 		return caldavsso_db::get_instance()->del_user($args['user']->ID);
 	}
 
+    /**
+     * Create instances of a recurring event
+     *
+     * @param array    $event Hash array with event properties
+     * @param DateTime $start Start date of the recurrence window
+     * @param DateTime $end   End date of the recurrence window
+     *
+     * @return array List of recurring event instances
+     */
+    public function get_recurring_events($event, $start, $end = null){
+        $events = [];
+        if(!empty($event['recurrence'])){
+            $rcmail     = rcmail::get_instance();
+            $recurrence = new libcalendaring_recurrence($rcmail->plugins->get_plugin('calendar')->lib, $event);
+            $recurrence_id_format = libcalendaring::recurrence_id_format($event);
+
+            // determine a reasonable end date if none given
+            if(!$end){
+                switch ($event['recurrence']['FREQ']) {
+                case 'YEARLY':  $intvl = 'P100Y'; break;
+                case 'MONTHLY': $intvl = 'P20Y';  break;
+                default:        $intvl = 'P10Y';  break;
+                }
+
+                $end = clone $event['start'];
+                $end->add(new DateInterval($intvl));
+            }
+
+            $i = 0;
+            while($next_event = $recurrence->next_instance()){
+				// add to output if in range
+                if (($next_event['start'] <= $end && $next_event['end'] >= $start)) {
+                    $next_event['_instance'] = $next_event['start']->format($recurrence_id_format);
+                    $next_event['id'] = $next_event['uid'] . '.ics/' . $next_event['_instance'];
+                    $next_event['recurrence_id'] = $event['uid'];
+                    $events[] = $next_event;
+                }
+
+                if($next_event['start'] > $end || ++$i > 1000) break;
+            }
+        }
+        return $events;
+    }
+
 	/**
 	 * Callback function to produce driver-specific calendar create/edit form
 	 *
@@ -354,7 +425,11 @@ class caldavsso_driver extends calendar_driver
 	 */
 	public function calendar_form($action, $calendar, $formfields){
 		$calendar = $this->calendars[$calendar["id"]];
-		
+
+		if(!isset($calendar["dav_sso"])){
+			return parent::calendar_form($action, $calendar, $formfields);
+		}
+
 		$array_caldav_readonly = array(
             "name" => "caldav_readonly",
             "id" => "caldav_readonly",
@@ -364,7 +439,7 @@ class caldavsso_driver extends calendar_driver
 		}
         $input_caldav_readonly = new html_checkbox($array_caldav_readonly);
         $formfields["caldav_readonly"] = array(
-            "label" => $this->cal->gettext("readonly"),
+            "label" => "Read only",
             "value" => $input_caldav_readonly->show(),
             "id" => "caldav_readonly",
         );
@@ -376,7 +451,7 @@ class caldavsso_driver extends calendar_driver
             "size" => 20
         ));
         $formfields["caldav_url"] = array(
-            "label" => $this->cal->gettext("caldavurl"),
+            "label" => "CalDAV url",
             "value" => $input_caldav_url->show($calendar["dav_url"]),
             "id" => "caldav_url",
         );
@@ -390,7 +465,7 @@ class caldavsso_driver extends calendar_driver
 		}
         $input_caldav_sso = new html_checkbox($array_caldav_sso);
         $formfields["caldav_sso"] = array(
-            "label" => $this->cal->gettext("caldavsso"),
+            "label" => "SSO",
             "value" => $input_caldav_sso->show(),
             "id" => "caldav_sso",
         );

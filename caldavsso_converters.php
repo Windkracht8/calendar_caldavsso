@@ -6,7 +6,7 @@ class caldavsso_converters{
 	public static function driver2vevent($driver_event){
 		$vcal = new VObject\Component\VCalendar;
 		$vevent = $vcal->createComponent('VEVENT');
-		
+
 		if($driver_event['allday'] == 1){
 			$vevent->DTSTART = gmdate("Ymd", $driver_event['start']->format('U'));
 			$vevent->DTSTART['VALUE'] = 'DATE';
@@ -16,12 +16,12 @@ class caldavsso_converters{
 			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'TRUE';
 		}else{
 			$vevent->DTSTART = $driver_event['start']->format('Ymd\THis');
-			$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
 			$vevent->DTEND = $driver_event['end']->format('Ymd\THis');
-			$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
 			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'FALSE';
 		}
-		
+		$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
+		$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
+
 		if(isset($driver_event['title']) && $driver_event['title'] != ""){
 			$vevent->SUMMARY = $driver_event['title'];
 		}
@@ -53,16 +53,16 @@ class caldavsso_converters{
 			}
 		}
 		if(isset($driver_event['status']) && $driver_event['status'] != ""){$vevent->STATUS = $driver_event['status'];}
-		
+
 		if(isset($driver_event['sensitivity']) && $driver_event['sensitivity'] != ""){$vevent->CLASS = strtoupper($driver_event['sensitivity']);}
 		if(isset($driver_event['priority']) && $driver_event['priority'] != ""){$vevent->PRIORITY = $driver_event['priority'];}
-		
+
 		if(isset($driver_event['attendees']) && is_array($driver_event['attendees'])){
 			foreach($driver_event['attendees'] as $attendee){
 				if($attendee['role'] == "ORGANIZER"){
 					$vevent->add('ORGANIZER', "mailto:".$attendee['email'], ['CN' => $attendee['name']]);
 				}else{
-					$vevent->add('ATTENDEE', "mailto:".$attendee['email'], 
+					$vevent->add('ATTENDEE', "mailto:".$attendee['email'],
 						['CN' => $attendee['name'],
 							'ROLE' => $attendee['role'],
 							'PARTSTAT' => $attendee['status'],
@@ -80,7 +80,7 @@ class caldavsso_converters{
 				$vevent->add($valarm);
 			}
 		}
-		
+
 		if(isset($driver_event['recurrence']) && is_array($driver_event['recurrence'])){
 			$rrule = "FREQ=".$driver_event['recurrence']['FREQ'];
 			if(isset($driver_event['recurrence']['COUNT'])){$rrule .= ";COUNT=".$driver_event['recurrence']['COUNT'];}
@@ -93,16 +93,16 @@ class caldavsso_converters{
 			}
 			$rrule .= ";INTERVAL=".$driver_event['recurrence']['INTERVAL'];
 			if(isset($driver_event['recurrence']['BYDAY'])){$rrule .=";BYDAY=".$driver_event['recurrence']['BYDAY'];}
-			
+
 			$vevent->add('RRULE', $rrule);
 		}
-		
+
 		$vevent->DTSTAMP = gmdate("Ymd\THis\Z");
 		$vevent->{'LAST-MODIFIED'} = gmdate("Ymd\THis\Z");
-		
+
 		return $vevent;
 	}
-	
+
 	public static function addTimezone(&$vcal){
 		$vevent = $vcal->VEVENT;
 		if(!isset($vevent->DTSTART['TZID'])){return;}
@@ -110,7 +110,13 @@ class caldavsso_converters{
 		$tzid = (string)$vevent->DTSTART['TZID'];
 		if(!in_array($tzid, timezone_identifiers_list())){return;}
 
-		if(isset($vcal->VTIMEZONE->TZID) && $vcal->VTIMEZONE->TZID == $tzid){return;}
+		if(isset($vcal->VTIMEZONE->TZID)){
+			if($vcal->VTIMEZONE->TZID == $tzid){
+				return;
+			}else{
+				unset($vcal->VTIMEZONE);
+			}
+		}
 
 		$year = substr((string)$vevent->DTSTART, 0, 4);
 
@@ -129,25 +135,25 @@ class caldavsso_converters{
 				}
 			}
 			$vtransition = $vcal->createComponent($transitions[$i]['isdst'] == 1 ? "DAYLIGHT" : "STANDARD");
-			
+
 			$vtransition->TZOFFSETFROM = $offset_from;
 			$vtransition->TZOFFSETTO = $offset_to;
 			$offset_from = $offset_to;
-			
+
 			$vtransition->TZNAME = $transitions[$i]['abbr'];
 			$vtransition->DTSTART = date("Ymd\THis", $transitions[$i]['ts']);
 			$vtimezone->add($vtransition);
 		}
 		$vcal->add($vtimezone);
 	}
-	
+
 	private static function phpOffsetToIcalOffset($phpoffset) {
 		$prefix = $phpoffset < 0 ? "-" : "+";
 		$offset = abs($phpoffset);
 		$hours = floor($offset / 3600);
 		return sprintf("$prefix%'.02d%'.02d", $hours, ($offset - ($hours * 3600)) / 60);
 	}
-	
+
 	public static function updateDates(&$vevent, $driver_event){
 		if($driver_event['allday'] == 1){
 			$vevent->DTSTART = gmdate("Ymd", $driver_event['start']->format('U'));
@@ -158,13 +164,18 @@ class caldavsso_converters{
 			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'TRUE';
 		}else{
 			$vevent->DTSTART = $driver_event['start']->format('Ymd\THis');
-			$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
 			$vevent->DTEND = $driver_event['end']->format('Ymd\THis');
-			$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
 			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'FALSE';
 		}
+		$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
+		$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
+
 		//reset attendee status because the start and/or end time has changed
-		foreach($vevent->ATTENDEE as $attendee){$attendee['PARTSTAT'] = "NEEDS-ACTION";}
+		if(isset($vevent->ATTENDEE) && is_array($vevent->ATTENDEE)){
+			foreach($vevent->ATTENDEE as $attendee){
+				$attendee['PARTSTAT'] = "NEEDS-ACTION";
+			}
+		}
 
 		$vevent->DTSTAMP = gmdate("Ymd\THis\Z");
 		$vevent->{'LAST-MODIFIED'} = gmdate("Ymd\THis\Z");
@@ -173,10 +184,8 @@ class caldavsso_converters{
 	public static function vevent2driver($vevent, $cal_id, $id_mixed, $RRULE = null){
 		$driver_event = array();
 		$driver_event["calendar"] = $cal_id;
-		list($id, $id_rec, $id_full) = caldavsso_dav::grab_ids($id_mixed);
-		$driver_event["id"] = $id_full;
-		$driver_event["allday"] = -1;
-		$driver_event["free_busy"] = -1;
+		list($event_id, $event_id_rec, $event_id_full) = caldavsso_dav::grab_ids($id_mixed);
+		$driver_event["id"] = $event_id_full;
 		$driver_event["attendees"] = array();
 
 		if($RRULE){
@@ -195,35 +204,50 @@ class caldavsso_converters{
 			$driver_event["recurrence"] = $rec_array;
 			$driver_event["isexception"] = 0;
 		}
-		
-		foreach($vevent->children as $value){
+
+		$driver_event['uid'] = (string)$vevent->UID;
+
+		$driver_event["allday"] = 0;
+		if(strlen((string)$vevent->DTSTART) == 8){
+			$driver_event["allday"] = 1;
+			$driver_event['start'] = new DateTime((string)$vevent->DTSTART);
+		}else{
+			$driver_event['start'] = $vevent->DTSTART->getDateTime();
+		}
+		if(isset($vevent->DTEND)){
+			if(strlen((string)$vevent->DTEND) == 8){
+				$driver_event["allday"] = 1;
+				$driver_event['end'] = new DateTime($vevent->DTEND);
+				$driver_event["end"]->modify("-1 day");
+			}else{
+				$driver_event['end'] = $vevent->DTEND->getDateTime();
+			}
+		}else{
+			$driver_event['end'] = $driver_event['start'];
+		}
+		if(isset($vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'}) && $vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} == "TRUE"){
+			$driver_event["allday"] = 1;
+		}
+
+		$driver_event["free_busy"] = $driver_event["allday"] == 1 ? 'busy' : 'free';
+		if(isset($vevent->TRANSP)){
+			$driver_event["free_busy"] = (string)$vevent->TRANSP == "OPAQUE" ? 'busy' : 'free';
+		}
+		if(isset($vevent->{'X-MICROSOFT-CDO-INTENDEDSTATUS'})){
+			switch((string)$vevent->{'X-MICROSOFT-CDO-INTENDEDSTATUS'}){
+				case "BUSY":
+				case "FREE":
+				case "TENTATIVE":
+					$driver_event["free_busy"] = strtolower((string)$vevent->{'X-MICROSOFT-CDO-INTENDEDSTATUS'});
+					break;
+				case "OOF":
+					$driver_event["free_busy"] = "outofoffice";
+					break;
+			}
+		}
+
+		foreach($vevent->children() as $value){
 			switch($value->name){
-				case "DTSTART":
-					$driver_event['start'] = (string)$value;
-					break;
-				case "DTEND":
-					$driver_event['end'] = (string)$value;
-					break;
-				case "X-MICROSOFT-CDO-ALLDAYEVENT":
-					$driver_event["allday"] = (string)$value == "TRUE" ? 1 : 0;
-					break;
-				case "TRANSP":
-					if($driver_event["free_busy"] == -1){
-						$driver_event["free_busy"] = (string)$value == "OPAQUE" ? 'busy' : 'free';
-					}
-					break;
-				case "X-MICROSOFT-CDO-INTENDEDSTATUS":
-					switch((string)$value){
-						case "BUSY":
-						case "FREE":
-						case "TENTATIVE":
-							$driver_event["free_busy"] = strtolower((string)$value);
-							break;
-						case "OOF":
-							$driver_event["free_busy"] = "outofoffice";
-							break;
-					}
-					break;
 				case "STATUS":
 					$driver_event["status"] = (string)$value;
 					break;
@@ -237,12 +261,10 @@ class caldavsso_converters{
 					$driver_event["description"] = self::unescape($value);
 					break;
 				case "ORGANIZER":
-					$email = (string)$value;
-					if(strpos(strtolower($email), 'mailto:') === 0){$email = substr($email, 7);}
 					$driver_event["attendees"][] = array(
 									"role" => "ORGANIZER",
 									"rsvp" => 1,
-									"email" => $email,
+									"email" => str_ireplace("MAILTO:", "", (string)$value),
 									"name" => self::unescape($value['CN'])
 									);
 					break;
@@ -274,9 +296,11 @@ class caldavsso_converters{
 					$driver_event["isexception"] = 0;
 					break;
 				case "RECURRENCE-ID":
-					$driver_event["recurrence_id"] = gmdate("Ymd\THis\Z", $value->getDateTime()->format('U'));
-					$driver_event["isexception"] = 0;
-					$driver_event["id"] = $driver_event["id"]."/".gmdate("Ymd\THis\Z", $value->getDateTime()->format('U'));
+					$driver_event["_instance"] = (string)$value;
+					$driver_event["isexception"] = 1;
+					$driver_event["id"] = $driver_event["id"]."/".(string)$value;
+					$driver_event["recurrence_id"] = $driver_event['uid'];
+					$driver_event["recurrence_date"] = $value->getDateTime(date_timezone_get($driver_event['start']));
 					break;
 				case "CLASS":
 					$driver_event['sensitivity'] = strtolower((string)$value);
@@ -300,8 +324,11 @@ class caldavsso_converters{
 					}
 					break;
 				case "UID":
-					$driver_event['uid'] = (string)$value;
-					break;
+				case "DTSTART":
+				case "DTEND":
+				case "X-MICROSOFT-CDO-ALLDAYEVENT":
+				case "TRANSP":
+				case "X-MICROSOFT-CDO-INTENDEDSTATUS":
 				case "DTSTAMP":
 				case "LAST-MODIFIED":
 				case "CREATED":
@@ -318,26 +345,10 @@ class caldavsso_converters{
 					rcube::raise_error(array('code' => 500, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "unknown property: ".(string)$value->name.":".(string)$value), true, false);
 			}
 		}
-		// If no end, default to same as start
-		if(!isset($driver_event["end"])){$driver_event["end"] = $driver_event["start"];}
-		// If no allday, guess based on start and end
-		if($driver_event["allday"] == -1){
-			$driver_event["allday"] = (strlen($driver_event["start"]) < 13 || strlen($driver_event["end"]) < 13) ? 1 : 0;
-		}
-		// If allday, substract one from end
-		if($driver_event["allday"] == 1){
-			$driver_event["end"] = intval($driver_event["end"]) -1;
-		}
-		// Convert start and end to date object
-		$driver_event['start'] = new DateTime($driver_event["start"]);
-		$driver_event['end'] = new DateTime($driver_event["end"]);
 
-		// If no showas, default to busy
-		if($driver_event["showas"] == -1){$driver_event["showas"] = 1;}
-		
 		return $driver_event;
 	}
-	
+
 	public static function unescape($value){
 		$string = (string)$value;
 		$string = str_replace( '\\n', "\n", $string);

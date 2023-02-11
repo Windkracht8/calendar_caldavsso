@@ -62,17 +62,24 @@ class caldavsso_dav{
 		caldavsso_converters::addTimezone($vcal);
 		$vcal->PRODID = caldavsso_driver::PRODID;
 
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
-		
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
+
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "204"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post event to server: ".$response->raw_body), true, true);
+		if($response["code"] != "204"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post event to server: ".$response["body"]), true, true);
 		}
 
 		return true;
 	}
-	
+
 	public static function upd_event($driver_event){
+		if(isset($driver_event['_fromcalendar'])){
+			// We are moving the event to a different calendar
+			self::del_event(array('calendar' => $driver_event['_fromcalendar'], 'id' => $driver_event['id']));
+			self::create_event($driver_event);
+			return true;
+		}
+
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
@@ -83,15 +90,18 @@ class caldavsso_dav{
 		$vevent = caldavsso_converters::driver2vevent($driver_event);
 		$vevent->UID = $vcal->VEVENT->UID;
 
-		if((string)$vcal->VEVENT->DTSTART != (string)$vevent->DTSTART || 
-			(string)$vcal->VEVENT->DTEND != (string)$vevent->DTEND){
+		if(isset($vevent->ATTENDEE) && is_array($vevent->ATTENDEE) && (
+				(string)$vcal->VEVENT->DTSTART != (string)$vevent->DTSTART || 
+				(string)$vcal->VEVENT->DTEND != (string)$vevent->DTEND)){
 			//reset attendee status because the start and/or end time has changed
 			foreach($vevent->ATTENDEE as $attendee){$attendee['PARTSTAT'] = "NEEDS-ACTION";}
 		}
-		
+
+		if(!isset($driver_event['_savemode'])) $driver_event['_savemode'] = "single";
+
 		switch($driver_event['_savemode']){
 			case "future":
-				foreach($vcal->VEVENT as $id => $vevent_loop){
+				foreach($vcal->VEVENT as $vevent_loop){
 					if($vevent_loop->{'RECURRENCE-ID'} == $id_rec || $vevent_loop->{'RECURRENCE-ID'} == substr($id_rec, 0, 8)){
 						$vcal->remove($vevent_loop);
 						break;
@@ -104,6 +114,7 @@ class caldavsso_dav{
 					$vevent->{'RECURRENCE-ID'} = $id_rec;
 				}
 				$vevent->{'RECURRENCE-ID'}['RANGE'] = 'THISANDFUTURE';
+				$vevent->remove('RRULE');
 				$vcal->add($vevent);
 				break;
 			case "current":
@@ -119,6 +130,7 @@ class caldavsso_dav{
 				}else{
 					$vevent->{'RECURRENCE-ID'} = $id_rec;
 				}
+				$vevent->remove('RRULE');
 				$vcal->add($vevent);
 				break;
 			case "all":
@@ -129,34 +141,34 @@ class caldavsso_dav{
 		caldavsso_converters::addTimezone($vcal);
 		$vcal->PRODID = caldavsso_driver::PRODID;
 
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
 
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "204"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post update to server: ".$response->raw_body), true, true);
+		if($response["code"] != "204"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post update to server: ".$response["body"]), true, true);
 		}
 
 		return true;
 	}
-	
+
 	public static function del_event($driver_event){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
 
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
-		
+
 		switch($driver_event['_savemode']){
 			case "future":
 				$vcal = self::get_dav_vcal($cal, $id);
 				$rrule = (string)$vcal->VEVENT->RRULE;
 				$rrule = preg_replace(array("/COUNT=.*;/", "/;COUNT=.*/"), "", $rrule);
-				
+
 				//Substract one day
 				$id_rec_datetime = new DateTime($id_rec);
 				$id_rec_datetime->sub(new DateInterval('P1D'));
 				$id_rec = $id_rec_datetime->format('Ymd\THis\Z');
-				
+
 				//Set same format as DTSTART
 				$id_rec = substr($id_rec, 0, strlen($vcal->VEVENT->DTSTART));
 
@@ -164,10 +176,10 @@ class caldavsso_dav{
 				$vcal->VEVENT->RRULE = $rrule;
 				$vcal->PRODID = caldavsso_driver::PRODID;
 
-				$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+				$headers = array('Content-type: text/calendar;charset="utf-8"');
 				$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-				if($response->code != "204"){
-					rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response->raw_body), true, true);
+				if($response["code"] != "204"){
+					rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
 				}
 				return true;
 			case "current":
@@ -188,12 +200,12 @@ class caldavsso_dav{
 					}
 					$vcal->VEVENT->EXDATE = $exdates;
 				}
-				
+
 				$vcal->PRODID = caldavsso_driver::PRODID;
-				$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+				$headers = array('Content-type: text/calendar;charset="utf-8"');
 				$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-				if($response->code != "204"){
-					rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response->raw_body), true, true);
+				if($response["code"] != "204"){
+					rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
 				}
 				return true;
 			case "all":
@@ -201,19 +213,19 @@ class caldavsso_dav{
 		}
 
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'DELETE', "", "", $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "204"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server ".$cal['dav_url']."/".$href.": ".$response->raw_body), true, true);
+		if($response["code"] != "204"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server ".$cal['dav_url']."/".$href.": ".$response["body"]), true, true);
 		}
 
 		return true;
 	}
-	
+
 	public static function update_attendees($driver_event, $attendees){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
 		$vcal = self::get_dav_vcal($cal, $id);
-		
+
 		foreach($attendees as $attendee){
 			$vattendees = $vcal->VEVENT->select("ATTENDEE");
 			foreach($vattendees as $vattendee){
@@ -225,24 +237,24 @@ class caldavsso_dav{
 				}
 			}
 		}
-		
+
 		$vcal->PRODID = caldavsso_driver::PRODID;
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "204"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post event to server: ".$response->raw_body), true, true);
+		if($response["code"] != "204"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to post event to server: ".$response["body"]), true, true);
 		}
-		
+
 		return true;
 	}
-	
+
 	public static function create_event($driver_event){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
 		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
 
 		$uid = self::generateUID($cal, $driver_event['uid']);
-		
+
 		$vcal = new VObject\Component\VCalendar;
 		$vevent = caldavsso_converters::driver2vevent($driver_event);
 		$vevent->UID = $uid;
@@ -250,16 +262,16 @@ class caldavsso_dav{
 		caldavsso_converters::addTimezone($vcal);
 		$vcal->PRODID = caldavsso_driver::PRODID;
 
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
-		
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
+
 		$response = self::makeRequest($cal['dav_url']."/".$uid.".ics", 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "201"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to create event on server: ".$response->raw_body), true, true);
+		if($response["code"] != "201"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to create event on server: ".$response["body"]), true, true);
 		}
 
 		return true;
 	}
-	
+
 	public static function get_dav_vcal_id($cal_id, $id_mixed){
 		$cal = caldavsso_db::get_instance()->get_cal($cal_id);
 		list($id, $id_rec, $id_full) = self::grab_ids($id_mixed);
@@ -267,25 +279,25 @@ class caldavsso_dav{
 	}
 	public static function get_dav_vcal($cal, $id){
 		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
-		
+
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'GET', "", "", $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "200"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to get event from server: ".$response->raw_body), true, true);
+		if($response["code"] != "200"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to get event from server: ".$response["body"]), true, true);
 		}
 
 		try{
-			$dav_vcal = VObject\Reader::read($response->raw_body, VObject\Reader::OPTION_FORGIVING);
+			$dav_vcal = VObject\Reader::read($response["body"], VObject\Reader::OPTION_FORGIVING);
 		}catch(Exception $e){
 			rcube::raise_error(array('code' => 500, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to parse vobject: ".$e->getMessage(), true, true));
 		}
 		return $dav_vcal;
 	}
-	
+
 	public static function get_events($start, $end, $query, $cal_id, $virtual, $modifiedsince){
 		$start_zulu = date("Ymd\THis\Z", $start);
 		$end_zulu = date("Ymd\THis\Z", $end);
-		
-		$headers = array('Content-type'=>'text/xml; charset="utf-8"', 'Depth'=>'1');
+
+		$headers = array('Content-type: text/xml;charset="utf-8"', 'Depth: 1');
 		$body = '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
 				.'<d:prop><c:calendar-data /></d:prop>'
 				.'<c:filter>'
@@ -315,21 +327,21 @@ class caldavsso_dav{
 		}
 
 		$response = self::makeRequest($cal['dav_url'], 'REPORT', $headers, $body, $cal['dav_user'], $cal['dav_pass']);
-		if($response->code != "207"){
-			rcube::raise_error(array('code' => $response->code, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to get events from server: ".$response->raw_body), true, true);
+		if($response["code"] != "207"){
+			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to get events from server for calendar ".$cal['name'].": ".$response["body"]), true, true);
 		}
 
 		$xmlDoc = new DOMDocument();
-		if(!$xmlDoc->loadXML($response->raw_body)){
+		if(!$xmlDoc->loadXML($response["body"])){
 			rcube::raise_error(array('code' => 500, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to interpret response from server", true, true));
 		}
 		$driver_events = array();
-		$responses = $xmlDoc->getElementsByTagName('response');
-		foreach($responses as $response){
-			$hrefs = $response->getElementsByTagName('href');
+		$xmlresponses = $xmlDoc->getElementsByTagName('response');
+		foreach($xmlresponses as $xmlresponse){
+			$hrefs = $xmlresponse->getElementsByTagName('href');
 			$href = $hrefs[0]->nodeValue;
-			
-			$calendar_datas = $response->getElementsByTagName('calendar-data');
+
+			$calendar_datas = $xmlresponse->getElementsByTagName('calendar-data');
 			$calendar_data = $calendar_datas[0]->nodeValue;
 
 			try{
@@ -340,19 +352,20 @@ class caldavsso_dav{
 				rcube::raise_error(array('code' => 500, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to parse vobject: ".$e->getMessage(), true, true));
 			}
 
-			foreach($vcal->children as $vevent){
-				if($vevent->name != "VEVENT"){continue;}
-				$driver_events[] = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $RRULE);
+			if(isset($vcal->VEVENT)){
+				foreach($vcal->VEVENT as $vevent){
+					$driver_events[] = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $RRULE);
+				}
 			}
 		}
 		return $driver_events;
 	}
-	
+
 	public static function generateUID($cal, $uid = null){
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
 		$uid = $uid == null ? uniqid() : $uid;
 		$response = self::makeRequest($cal['dav_url']."/".$uid.".ics", 'GET', $headers, "", $cal['dav_user'], $cal['dav_pass']);
-		if($response->code == "404"){return $uid;}
+		if($response["code"] == "404"){return $uid;}
 		return self::generateUID($cal);
 	}
 
@@ -377,24 +390,31 @@ class caldavsso_dav{
 	public static function does_exists($cal_id, $id_mixed){
 		list($id, $id_rec, $id_full) = self::grab_ids($id_mixed);
 		$cal = caldavsso_db::get_instance()->get_cal($cal_id);
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
-		$headers = array('Content-type'=>'text/calendar; charset="utf-8"');
+		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url for cal $cal_id user ".rcube::get_instance()->get_user_name()), true, true);}
+		$headers = array('Content-type: text/calendar;charset="utf-8"');
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'GET', $headers, "", $cal['dav_user'], $cal['dav_pass']);
-		return $response->code == "200";
+		return $response["code"] == "200";
 	}
 
-	public static function makeRequest($url, $method, $headers, $body, $user, $pass){
-		$httpful = \Httpful\Request::init();
-		$httpful->basicAuth($user, $pass);
-		$httpful->addHeader("User-Agent", "roundcube_caldavsso");
-		$httpful->uri($url);
-		$httpful->method($method);
-		if(is_array($headers)){
-			foreach($headers as $name => $value){
-				$httpful->addHeader($name, $value);
-			}
+	public static function makeRequest($request_url, $request_method, $request_headers, $request_body, $user, $pass){
+		$curl = curl_init();
+		curl_setopt($curl, CURLOPT_URL, $request_url);
+        curl_setopt($curl, CURLOPT_CUSTOMREQUEST, $request_method);
+		curl_setopt($curl, CURLOPT_USERPWD, $user.':'.$pass);
+		curl_setopt($curl, CURLOPT_USERAGENT, "roundcube_caldavsso");
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($curl, CURLOPT_POSTFIELDS, $request_body);
+		if(is_array($request_headers)) curl_setopt($curl, CURLOPT_HTTPHEADER, $request_headers);
+
+		$reponse = array();
+		try{
+			$reponse["body"] = curl_exec($curl);
+			$reponse["code"] = curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+			curl_close($curl);
+		}catch(Exception $e){
+			$reponse["code"] = 0;
+			$reponse["body"] = $e->getMessage();
 		}
-		$httpful->body($body);
-		return $httpful->send();
+		return $reponse;
 	}
 }

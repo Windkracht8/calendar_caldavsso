@@ -12,4 +12,4 @@ Enable the calendar plugin.
 TODO:
  - Alarms
  - Search in event description
- 
+ - Better support for recurring meetings 
