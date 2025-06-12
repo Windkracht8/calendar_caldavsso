@@ -8,7 +8,7 @@ use Sabre\VObject;
 class caldavsso_dav{
 	public static function upd_event_time($driver_event){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
-		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
+		if($cal['dav_readonly'] ?? 0 == 1){return false;}
 
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
 
@@ -17,47 +17,51 @@ class caldavsso_dav{
 
 		caldavsso_converters::updateDates($vevent, $driver_event);
 
-		switch($driver_event['_savemode']){
-			case "future":
-				foreach($vcal->VEVENT as $vevent_loop){
-					if($vevent_loop->{'RECURRENCE-ID'} == $id_rec || $vevent_loop->{'RECURRENCE-ID'} == substr($id_rec, 0, 8)){
-						caldavsso_converters::updateDates($vevent_loop, $driver_event);
-						$vevent_loop->{'RECURRENCE-ID'}['RANGE'] = 'THISANDFUTURE';
-						break 2;
+		if(isset($driver_event['_savemode'])){
+			switch($driver_event['_savemode']){
+				case "future":
+					foreach($vcal->VEVENT as $vevent_loop){
+						if($vevent_loop->{'RECURRENCE-ID'} == $id_rec || $vevent_loop->{'RECURRENCE-ID'} == substr($id_rec, 0, 8)){
+							caldavsso_converters::updateDates($vevent_loop, $driver_event);
+							$vevent_loop->{'RECURRENCE-ID'}['RANGE'] = 'THISANDFUTURE';
+							break 2;
+						}
 					}
-				}
-				unset($vevent->RRULE);
-				unset($vevent->EXDATE);
-				if(strlen((string)$vcal->VEVENT->DTSTART) == 8){
-					$vevent->{'RECURRENCE-ID'} = substr($id_rec, 0, 8);
-					$vevent->{'RECURRENCE-ID'}['VALUE'] = 'DATE';
-				}else{
-					$vevent->{'RECURRENCE-ID'} = $id_rec;
-				}
-				$vevent->{'RECURRENCE-ID'}['RANGE'] = 'THISANDFUTURE';
-				$vcal->add($vevent);
-				break;
-			case "current":
-				foreach($vcal->VEVENT as $vevent_loop){
-					if($vevent_loop->{'RECURRENCE-ID'} == $id_rec || $vevent_loop->{'RECURRENCE-ID'} == substr($id_rec, 0, 8)){
-						caldavsso_converters::updateDates($vevent_loop, $driver_event);
-						break 2;
+					unset($vevent->RRULE);
+					unset($vevent->EXDATE);
+					if(strlen((string)$vcal->VEVENT->DTSTART) == 8){
+						$vevent->{'RECURRENCE-ID'} = substr($id_rec, 0, 8);
+						$vevent->{'RECURRENCE-ID'}['VALUE'] = 'DATE';
+					}else{
+						$vevent->{'RECURRENCE-ID'} = $id_rec;
 					}
-				}
-				unset($vevent->RRULE);
-				unset($vevent->EXDATE);
-				if(strlen((string)$vcal->VEVENT->DTSTART) == 8){
-					$vevent->{'RECURRENCE-ID'} = substr($id_rec, 0, 8);
-					$vevent->{'RECURRENCE-ID'}['VALUE'] = 'DATE';
-				}else{
-					$vevent->{'RECURRENCE-ID'} = $id_rec;
-				}
-				$vcal->add($vevent);
-				break;
-			case "all":
-			default:
-				$vcal->VEVENT = $vevent;
-				break;
+					$vevent->{'RECURRENCE-ID'}['RANGE'] = 'THISANDFUTURE';
+					$vcal->add($vevent);
+					break;
+				case "current":
+					foreach($vcal->VEVENT as $vevent_loop){
+						if($vevent_loop->{'RECURRENCE-ID'} == $id_rec || $vevent_loop->{'RECURRENCE-ID'} == substr($id_rec, 0, 8)){
+							caldavsso_converters::updateDates($vevent_loop, $driver_event);
+							break 2;
+						}
+					}
+					unset($vevent->RRULE);
+					unset($vevent->EXDATE);
+					if(strlen((string)$vcal->VEVENT->DTSTART) == 8){
+						$vevent->{'RECURRENCE-ID'} = substr($id_rec, 0, 8);
+						$vevent->{'RECURRENCE-ID'}['VALUE'] = 'DATE';
+					}else{
+						$vevent->{'RECURRENCE-ID'} = $id_rec;
+					}
+					$vcal->add($vevent);
+					break;
+				case "all":
+				default:
+					$vcal->VEVENT = $vevent;
+					break;
+			}
+		}else{
+			$vcal->VEVENT = $vevent;
 		}
 		caldavsso_converters::addTimezone($vcal);
 		$vcal->PRODID = caldavsso_driver::PRODID;
@@ -81,8 +85,8 @@ class caldavsso_dav{
 		}
 
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
-		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
+		if($cal['dav_readonly'] ?? 0 == 1){return false;}
 
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
 
@@ -90,7 +94,7 @@ class caldavsso_dav{
 		$vevent = caldavsso_converters::driver2vevent($driver_event);
 		$vevent->UID = $vcal->VEVENT->UID;
 
-		if(isset($vevent->ATTENDEE) && is_array($vevent->ATTENDEE) && (
+		if(is_array($vevent->ATTENDEE) && (
 				(string)$vcal->VEVENT->DTSTART != (string)$vevent->DTSTART || 
 				(string)$vcal->VEVENT->DTEND != (string)$vevent->DTEND)){
 			//reset attendee status because the start and/or end time has changed
@@ -153,65 +157,69 @@ class caldavsso_dav{
 
 	public static function del_event($driver_event){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
-		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
+		if($cal['dav_readonly'] ?? 0 == 1){return false;}
 
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
 
-		switch($driver_event['_savemode']){
-			case "future":
-				$vcal = self::get_dav_vcal($cal, $id);
-				$rrule = (string)$vcal->VEVENT->RRULE;
-				$rrule = preg_replace(array("/COUNT=.*;/", "/;COUNT=.*/"), "", $rrule);
+		if(isset($driver_event['_savemode'])){
+			switch($driver_event['_savemode']){
+				case "future":
+					$vcal = self::get_dav_vcal($cal, $id);
+					$rrule = (string)$vcal->VEVENT->RRULE;
+					$rrule = preg_replace(array("/COUNT=.*;/", "/;COUNT=.*/"), "", $rrule);
 
-				//Substract one day
-				$id_rec_datetime = new DateTime($id_rec);
-				$id_rec_datetime->sub(new DateInterval('P1D'));
-				$id_rec = $id_rec_datetime->format('Ymd\THis\Z');
+					//Substract one day
+					$id_rec_datetime = new DateTime($id_rec);
+					$id_rec_datetime->sub(new DateInterval('P1D'));
+					$id_rec = $id_rec_datetime->format('Ymd\THis\Z');
 
-				//Set same format as DTSTART
-				$id_rec = substr($id_rec, 0, strlen($vcal->VEVENT->DTSTART));
+					//Set same format as DTSTART
+					$id_rec = substr($id_rec, 0, strlen($vcal->VEVENT->DTSTART));
 
-				$rrule .= ";UNTIL=$id_rec";
-				$vcal->VEVENT->RRULE = $rrule;
-				$vcal->PRODID = caldavsso_driver::PRODID;
+					$rrule .= ";UNTIL=$id_rec";
+					$vcal->VEVENT->RRULE = $rrule;
+					$vcal->PRODID = caldavsso_driver::PRODID;
 
-				$headers = array('Content-type: text/calendar;charset="utf-8"');
-				$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-				if($response["code"] != "204"){
-					rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
-				}
-				return true;
-			case "current":
-				$vcal = self::get_dav_vcal($cal, $id);
-				$vevent = $vcal->VEVENT;
-
-				if((strlen($vevent->DTSTART)) == 8){
-					$exdates = substr($id_rec, 0, 8);
-					if(isset($vevent->EXDATE)){
-						$exdates .= ",".$vevent->EXDATE;
-						unset($vcal->VEVENT->EXDATE);
+					$headers = array('Content-type: text/calendar;charset="utf-8"');
+					$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
+					if($response["code"] != "204"){
+						rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
 					}
-					$vcal->VEVENT->add('EXDATE', $exdates, ['VALUE' => 'DATE']);
-				}else{
-					$exdates = $id_rec;
-					if(isset($vevent->EXDATE)){
-						$exdates .= ",".$vevent->EXDATE;
-					}
-					$vcal->VEVENT->EXDATE = $exdates;
-				}
+					return true;
+				case "current":
+					$vcal = self::get_dav_vcal($cal, $id);
+					$vevent = $vcal->VEVENT;
 
-				$vcal->PRODID = caldavsso_driver::PRODID;
-				$headers = array('Content-type: text/calendar;charset="utf-8"');
-				$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
-				if($response["code"] != "204"){
-					rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
-				}
-				return true;
-			case "all":
-				break;
+					if((strlen($vevent->DTSTART)) == 8){
+						$exdates = substr($id_rec, 0, 8);
+						if(isset($vevent->EXDATE)){
+							$exdates .= ",".$vevent->EXDATE;
+							unset($vcal->VEVENT->EXDATE);
+						}
+						$vcal->VEVENT->add('EXDATE', $exdates, ['VALUE' => 'DATE']);
+					}else{
+						$exdates = $id_rec;
+						if(isset($vevent->EXDATE)){
+							$exdates .= ",".$vevent->EXDATE;
+						}
+						$vcal->VEVENT->EXDATE = $exdates;
+					}
+
+					$vcal->PRODID = caldavsso_driver::PRODID;
+					$headers = array('Content-type: text/calendar;charset="utf-8"');
+					$response = self::makeRequest($cal['dav_url']."/".$id, 'PUT', $headers, $vcal->serialize(), $cal['dav_user'], $cal['dav_pass']);
+					if($response["code"] != "204"){
+						rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server: ".$response["body"]), true, true);
+					}
+					return true;
+				case "all":
+					break;
+			}
 		}
-
+		if(strlen($id) < 5){
+			rcube::raise_error(array('code' => $reponse["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server, did not find the correct url"), true, true);
+		}
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'DELETE', "", "", $cal['dav_user'], $cal['dav_pass']);
 		if($response["code"] != "204"){
 			rcube::raise_error(array('code' => $response["code"], 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to delete on server ".$cal['dav_url']."/".$href.": ".$response["body"]), true, true);
@@ -222,7 +230,7 @@ class caldavsso_dav{
 
 	public static function update_attendees($driver_event, $attendees){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
-		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
+		if($cal['dav_readonly'] ?? 0 == 1){return false;}
 		list($id, $id_rec, $id_full) = self::grab_ids($driver_event['id']);
 		$vcal = self::get_dav_vcal($cal, $id);
 
@@ -250,8 +258,8 @@ class caldavsso_dav{
 
 	public static function create_event($driver_event){
 		$cal = caldavsso_db::get_instance()->get_cal($driver_event['calendar']);
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
-		if(isset($cal['dav_readonly']) && $cal['dav_readonly'] == 1){return false;}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
+		if($cal['dav_readonly'] ?? 0 == 1){return false;}
 
 		$uid = self::generateUID($cal, $driver_event['uid']);
 
@@ -278,7 +286,7 @@ class caldavsso_dav{
 		return self::get_dav_vcal($cal, $id);
 	}
 	public static function get_dav_vcal($cal, $id){
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'GET', "", "", $cal['dav_user'], $cal['dav_pass']);
 		if($response["code"] != "200"){
@@ -293,38 +301,24 @@ class caldavsso_dav{
 		return $dav_vcal;
 	}
 
-	public static function get_events($start, $end, $query, $cal_id, $virtual, $modifiedsince){
+	public static function get_events($start, $end, $query, $cal_id, $virtual, $modifiedsince, $tzid){
 		$start_zulu = date("Ymd\THis\Z", $start);
 		$end_zulu = date("Ymd\THis\Z", $end);
 
 		$headers = array('Content-type: text/xml;charset="utf-8"', 'Depth: 1');
-		$body = '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">'
-				.'<d:prop><c:calendar-data /></d:prop>'
-				.'<c:filter>'
-					.'<c:comp-filter name="VCALENDAR">'
-						.'<c:comp-filter name="VEVENT">'
-							.'<c:time-range start="'.$start_zulu.'" end="'.$end_zulu.'"/>';
-		if($query){
-			$body .=		'<c:prop-filter name="SUMMARY">'
-								.'<c:text-match match-type="contains">'.$query.'</c:text-match>'
-							.'</c:prop-filter>';
+		$body = '<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VEVENT">'
+				.'<c:time-range start="'.$start_zulu.'" end="'.$end_zulu.'"/>';
+		if($query){//TODO: query in DESCRIPTION, needs multiple queries
+			$body .= '<c:prop-filter name="SUMMARY"><c:text-match match-type="contains">'.$query.'</c:text-match></c:prop-filter>';
 		}
 		if($modifiedsince){
 			$modifiedsince_zulu = date("Ymd\THis\Z", $modifiedsince);
-			$body .=		'<c:prop-filter name="DTSTAMP">'
-								.'<c:time-range start="'.$modifiedsince_zulu.'" />'
-							.'</c:prop-filter>';
+			$body .= '<c:prop-filter name="DTSTAMP"><c:time-range start="'.$modifiedsince_zulu.'" /></c:prop-filter>';
 		}
-		$body .=		'</c:comp-filter>'
-					.'</c:comp-filter>'
-				.'</c:filter>'
-				// TODO: query in DESCRIPTION, needs multiple queries
-				.'</c:calendar-query>';
+		$body .= '</c:comp-filter></c:filter></c:calendar-query>';
 
 		$cal = caldavsso_db::get_instance()->get_cal($cal_id);
-		if(!isset($cal['dav_url'])){
-			rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);
-		}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url"), true, true);}
 
 		$response = self::makeRequest($cal['dav_url'], 'REPORT', $headers, $body, $cal['dav_user'], $cal['dav_pass']);
 		if($response["code"] != "207"){
@@ -344,20 +338,54 @@ class caldavsso_dav{
 			$calendar_datas = $xmlresponse->getElementsByTagName('calendar-data');
 			$calendar_data = $calendar_datas[0]->nodeValue;
 
+			$vcal = null;
 			try{
 				$vcal = VObject\Reader::read($calendar_data, VObject\Reader::OPTION_FORGIVING);
-				$RRULE = (string)$vcal->VEVENT->RRULE;
-				$vcal->expand(new DateTime($start_zulu), new DateTime($end_zulu));
+				$RRULE = null;
+				if(isset($vcal->VEVENT) && !is_null($vcal->VEVENT)){
+					if(isset($vcal->VEVENT->RRULE)){
+						$RRULE = (string)$vcal->VEVENT->RRULE;
+						foreach($vcal->VEVENT as $vevent){
+							if(isset($vevent->{'RECURRENCE-ID'}) 
+								&& isset($vevent->{'RECURRENCE-ID'}["RANGE"])
+							){
+								$exdate = $vevent->{'RECURRENCE-ID'}->getDateTime();
+								$exdate = $exdate->setTimezone(new DateTimeZone('UTC'));
+								$exdate = $exdate->format('Ymd\THis\Z');
+								$vcal->VEVENT->add("EXDATE", $exdate);
+							}
+						}
+						$vcal = $vcal->expand(new DateTime($start_zulu), new DateTime($end_zulu));
+					}
+					if(isset($vcal->VEVENT) && !is_null($vcal->VEVENT)){
+						$driver_event_THISANDFUTURE = null;
+						foreach($vcal->VEVENT as $vevent){
+							if(isset($vevent->{'RECURRENCE-ID'}) 
+								&& isset($vevent->{'RECURRENCE-ID'}["RANGE"])
+								&& $vevent->{'RECURRENCE-ID'}["RANGE"] == "THISANDFUTURE"
+							){
+								$driver_event_THISANDFUTURE = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $tzid, $RRULE);
+								$driver_events[] = $driver_event_THISANDFUTURE;
+							}elseif(!is_null($driver_event_THISANDFUTURE)){
+								$driver_event = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $tzid, $RRULE);
+								//TODO: account for move in start/end times
+								$driver_event_THISANDFUTURE['start'] = $driver_event['start'];
+								$driver_event_THISANDFUTURE['end'] = $driver_event['end'];
+								$driver_event_THISANDFUTURE['recurrence_id'] = $driver_event['recurrence_id'];
+								$driver_event_THISANDFUTURE['recurrence_date'] = $driver_event['recurrence_date'];
+								$driver_event_THISANDFUTURE['_instance'] = $driver_event['_instance'];
+								$driver_events[] = $driver_event_THISANDFUTURE;
+							}else{
+								$driver_events[] = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $tzid, $RRULE);
+							}
+						}
+					}
+				}
 			}catch(Exception $e){
 				rcube::raise_error(array('code' => 500, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "failed to parse vobject: ".$e->getMessage(), true, true));
 			}
-
-			if(isset($vcal->VEVENT)){
-				foreach($vcal->VEVENT as $vevent){
-					$driver_events[] = caldavsso_converters::vevent2driver($vevent, $cal_id, $href, $RRULE);
-				}
-			}
 		}
+		if(isset($vcal)) $vcal->destroy();
 		return $driver_events;
 	}
 
@@ -390,7 +418,7 @@ class caldavsso_dav{
 	public static function does_exists($cal_id, $id_mixed){
 		list($id, $id_rec, $id_full) = self::grab_ids($id_mixed);
 		$cal = caldavsso_db::get_instance()->get_cal($cal_id);
-		if(!isset($cal['dav_url'])){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url for cal $cal_id user ".rcube::get_instance()->get_user_name()), true, true);}
+		if(strlen($cal['dav_url'] ?? '')<5){rcube::raise_error(array('code' => 404, 'type' => 'php', 'file' => __FILE__, 'line' => __LINE__, 'message' => "no dav url for cal $cal_id user ".rcube::get_instance()->get_user_name()), true, true);}
 		$headers = array('Content-type: text/calendar;charset="utf-8"');
 		$response = self::makeRequest($cal['dav_url']."/".$id, 'GET', $headers, "", $cal['dav_user'], $cal['dav_pass']);
 		return $response["code"] == "200";

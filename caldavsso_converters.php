@@ -13,24 +13,16 @@ class caldavsso_converters{
 			$driver_event['end']->add(new DateInterval('P1D'));
 			$vevent->DTEND = gmdate("Ymd", $driver_event['end']->format('U'));
 			$vevent->DTEND['VALUE'] = 'DATE';
-			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'TRUE';
 		}else{
 			$vevent->DTSTART = $driver_event['start']->format('Ymd\THis');
 			$vevent->DTEND = $driver_event['end']->format('Ymd\THis');
-			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'FALSE';
 		}
 		$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
 		$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
 
-		if(isset($driver_event['title']) && $driver_event['title'] != ""){
-			$vevent->SUMMARY = $driver_event['title'];
-		}
-		if(isset($driver_event['description']) && $driver_event['description'] != ""){
-			$vevent->DESCRIPTION = $driver_event['description'];
-		}
-		if(isset($driver_event['location']) && $driver_event['location'] != ""){
-			$vevent->LOCATION = $driver_event['location'];
-		}
+		if(strlen($driver_event['title'] ?? '') > 1){$vevent->SUMMARY = $driver_event['title'];}
+		if(strlen($driver_event['description'] ?? '') > 1){$vevent->DESCRIPTION = $driver_event['description'];}
+		if(strlen($driver_event['location'] ?? '') > 1){$vevent->LOCATION = $driver_event['location'];}
 
 		if(isset($driver_event['free_busy'])){
 			switch($driver_event['free_busy']){
@@ -52,10 +44,11 @@ class caldavsso_converters{
 					break;
 			}
 		}
-		if(isset($driver_event['status']) && $driver_event['status'] != ""){$vevent->STATUS = $driver_event['status'];}
+		if(strlen($driver_event['status'] ?? '') > 1){$vevent->STATUS = $driver_event['status'];}
 
-		if(isset($driver_event['sensitivity']) && $driver_event['sensitivity'] != ""){$vevent->CLASS = strtoupper($driver_event['sensitivity']);}
-		if(isset($driver_event['priority']) && $driver_event['priority'] != ""){$vevent->PRIORITY = $driver_event['priority'];}
+		if(strlen($driver_event['sensitivity'] ?? '') > 1){$vevent->CLASS = strtoupper($driver_event['sensitivity']);}
+		if(strlen($driver_event['priority'] ?? '') > 1){$vevent->PRIORITY = $driver_event['priority'];}
+		if(strlen($driver_event['url'] ?? '') > 1){$vevent->URL = $driver_event['url'];}
 
 		if(isset($driver_event['attendees']) && is_array($driver_event['attendees'])){
 			foreach($driver_event['attendees'] as $attendee){
@@ -76,7 +69,8 @@ class caldavsso_converters{
 			foreach($driver_event['valarms'] as $alarm){
 				$valarm = $vcal->createComponent('VALARM');
 				$valarm->add('ACTION', "DISPLAY");
-				$valarm->add('TRIGGER', $alarm['trigger'], ['RELATED' => strtoupper($alarm['related'])]);
+				$related = strtoupper($alarm['related']) == "END" ? "END" : "START";
+				$valarm->add('TRIGGER', $alarm['trigger'], ['RELATED' => $related]);
 				$vevent->add($valarm);
 			}
 		}
@@ -161,17 +155,15 @@ class caldavsso_converters{
 			$driver_event['end']->add(new DateInterval('P1D'));
 			$vevent->DTEND = gmdate("Ymd", $driver_event['end']->format('U'));
 			$vevent->DTEND['VALUE'] = 'DATE';
-			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'TRUE';
 		}else{
 			$vevent->DTSTART = $driver_event['start']->format('Ymd\THis');
 			$vevent->DTEND = $driver_event['end']->format('Ymd\THis');
-			$vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} = 'FALSE';
 		}
 		$vevent->DTSTART['TZID'] = $driver_event['start']->getTimezone()->getName();
 		$vevent->DTEND['TZID'] = $driver_event['end']->getTimezone()->getName();
 
 		//reset attendee status because the start and/or end time has changed
-		if(isset($vevent->ATTENDEE) && is_array($vevent->ATTENDEE)){
+		if(is_array($vevent->ATTENDEE)){
 			foreach($vevent->ATTENDEE as $attendee){
 				$attendee['PARTSTAT'] = "NEEDS-ACTION";
 			}
@@ -181,13 +173,12 @@ class caldavsso_converters{
 		$vevent->{'LAST-MODIFIED'} = gmdate("Ymd\THis\Z");
 	}
 
-	public static function vevent2driver($vevent, $cal_id, $id_mixed, $RRULE = null){
+	public static function vevent2driver($vevent, $cal_id, $id_mixed, $tzid, $RRULE = null){
 		$driver_event = array();
 		$driver_event["calendar"] = $cal_id;
 		list($event_id, $event_id_rec, $event_id_full) = caldavsso_dav::grab_ids($id_mixed);
 		$driver_event["id"] = $event_id_full;
 		$driver_event["attendees"] = array();
-
 		if($RRULE){
 			$rec_array = array();
 			foreach(explode(";", $RRULE) as $prop){
@@ -213,6 +204,7 @@ class caldavsso_converters{
 			$driver_event['start'] = new DateTime((string)$vevent->DTSTART);
 		}else{
 			$driver_event['start'] = $vevent->DTSTART->getDateTime();
+			$driver_event['start'] = $driver_event['start']->setTimezone(new DateTimeZone($tzid));
 		}
 		if(isset($vevent->DTEND)){
 			if(strlen((string)$vevent->DTEND) == 8){
@@ -221,11 +213,12 @@ class caldavsso_converters{
 				$driver_event["end"]->modify("-1 day");
 			}else{
 				$driver_event['end'] = $vevent->DTEND->getDateTime();
+				$driver_event['end'] = $driver_event['end']->setTimezone(new DateTimeZone($tzid));
 			}
 		}else{
 			$driver_event['end'] = $driver_event['start'];
 		}
-		if(isset($vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'}) && $vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} == "TRUE"){
+		if($vevent->{'X-MICROSOFT-CDO-ALLDAYEVENT'} ?? '' == "TRUE"){
 			$driver_event["allday"] = 1;
 		}
 
@@ -245,7 +238,6 @@ class caldavsso_converters{
 					break;
 			}
 		}
-
 		foreach($vevent->children() as $value){
 			switch($value->name){
 				case "STATUS":
@@ -301,6 +293,7 @@ class caldavsso_converters{
 					$driver_event["id"] = $driver_event["id"]."/".(string)$value;
 					$driver_event["recurrence_id"] = $driver_event['uid'];
 					$driver_event["recurrence_date"] = $value->getDateTime(date_timezone_get($driver_event['start']));
+					//if range = THISANDFUTURE, then  $driver_event["thisandfuture"] = 1;
 					break;
 				case "CLASS":
 					$driver_event['sensitivity'] = strtolower((string)$value);
@@ -308,8 +301,11 @@ class caldavsso_converters{
 				case "PRIORITY":
 					$driver_event['priority'] = (string)$value;
 					break;
+				case "URL":
+					$driver_event['url'] = (string)$value;
+					break;
 				case "VALARM":
-					foreach($value->children as $valarm_child){
+					foreach($value->children() as $valarm_child){
 						if($valarm_child->name == "TRIGGER"){
 							$valarm = array();
 							$valarm['action'] = "DISPLAY";
@@ -326,6 +322,7 @@ class caldavsso_converters{
 				case "UID":
 				case "DTSTART":
 				case "DTEND":
+				case "EXDATE":
 				case "X-MICROSOFT-CDO-ALLDAYEVENT":
 				case "TRANSP":
 				case "X-MICROSOFT-CDO-INTENDEDSTATUS":

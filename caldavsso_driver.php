@@ -97,17 +97,55 @@ class caldavsso_driver extends calendar_driver
 		}
 	}
 
-	/**
-	 * Get a list of available calendars from this source
-	 *
-	 * @param integer Bitmask defining filter criterias
-	 *   We ignore this because all dav calendars are active
-	 *
-	 * @return array List of calendars
-	 */
-	public function list_calendars($filter = 0){
+    /**
+     * Get a list of available calendars from this source.
+     *
+     * @param int                           $filter Bitmask defining filter criterias
+     * @param ?kolab_storage_folder_virtual $tree   Reference to hierarchical folder tree object
+     *
+     * @return array List of calendars
+     */
+    public function list_calendars($filter = 0, &$tree = null){
 		return $this->calendars;
 	}
+
+    /**
+     * Get the caldav_calendar instance for the given calendar ID
+     *
+     * @param string $id Calendar identifier
+     *
+     * @return caldav_calendar|caldav_invitation_calendar|null Object or null if calendar doesn't exist
+     */
+    public function get_calendar($id){
+        // create calendar object if necessary
+        if (empty($this->calendars[$id])) {
+            if (in_array($id, [self::INVITATIONS_CALENDAR_PENDING, self::INVITATIONS_CALENDAR_DECLINED])) {
+                return new caldav_invitation_calendar($id, $this->cal);
+            }
+
+            // for unsubscribed calendar folders
+            if ($id !== self::BIRTHDAY_CALENDAR_ID) {
+                $calendar = caldav_calendar::factory($id, $this->cal);
+                if ($calendar->ready) {
+                    $this->calendars[$calendar->id] = $calendar;
+                }
+            }
+        }
+
+        return !empty($this->calendars[$id]) ? $this->calendars[$id] : null;
+    }
+
+    /**
+     * Get a calendar name for the given calendar ID
+     *
+     * @param string $id Calendar identifier
+     *
+     * @return string|null Calendar name if found
+     */
+    public function get_calendar_name($id){
+        $cal = $this->get_calendar($id);
+        return $cal ? $cal->get_name() : null;
+    }
 
 	/**
 	 * Create a new calendar.
@@ -116,16 +154,17 @@ class caldavsso_driver extends calendar_driver
 	 * @see database_driver::create_calendar()
 	 */
 	public function create_calendar($cal){
-		return caldavsso_db::get_instance()->set_cal_data(null
-										,$cal['name']
-										,$cal['color']
-										,$cal['showalarms']
-										,$cal['caldav_url']
-										,$cal['caldav_sso'] ? 1 : 0
-										,$cal['caldav_user']
-										,$cal['caldav_pass']
-										,$cal['caldav_readonly']
-										);
+		return caldavsso_db::get_instance()->set_cal_data(
+				null
+				,$cal['name']
+				,$cal['color']
+				,$cal['showalarms']
+				,$cal['caldav_url']
+				,$cal['caldav_sso'] ? 1 : 0
+				,$cal['caldav_user']
+				,$cal['caldav_pass']
+				,$cal['caldav_readonly']
+		);
 	}
 
 	/**
@@ -134,16 +173,17 @@ class caldavsso_driver extends calendar_driver
 	 * @see calendar_driver::edit_calendar()
 	 */
 	public function edit_calendar($cal){
-		return caldavsso_db::get_instance()->set_cal_data($cal['id']
-										,$cal['name']
-										,$cal['color']
-										,$cal['showalarms']
-										,$cal['caldav_url']
-										,$cal['caldav_sso'] ? 1 : 0
-										,$cal['caldav_user']
-										,$cal['caldav_pass']
-										,$cal['caldav_readonly']
-										);
+		return caldavsso_db::get_instance()->set_cal_data(
+				$cal['id']
+				,$cal['name']
+				,$cal['color']
+				,$cal['showalarms']
+				,$cal['caldav_url']
+				,$cal['caldav_sso'] ? 1 : 0
+				,$cal['caldav_user']
+				,$cal['caldav_pass']
+				,$cal['caldav_readonly']
+		);
 	}
 
 	/**
@@ -286,7 +326,7 @@ class caldavsso_driver extends calendar_driver
 		}
 
 		$dav_vcal = caldavsso_dav::get_dav_vcal_id($cal_id, $id_mixed);
-		return caldavsso_converters::vevent2driver($dav_vcal->VEVENT, $cal_id, $id_mixed);
+		return caldavsso_converters::vevent2driver($dav_vcal->VEVENT, $cal_id, $id_mixed, $this->rc->config->get('timezone'));
 	}
 
 	public function load_events($start, $end, $query = null, $calendars = null, $virtual = 1, $modifiedsince = null){
@@ -308,28 +348,8 @@ class caldavsso_driver extends calendar_driver
 		if($calendar == self::BIRTHDAY_CALENDAR_ID){
 			return $this->load_birthday_events($start, $end, $query, $modifiedsince);
 		}
-		$events = caldavsso_dav::get_events($start, $end, $query, $calendar, $virtual, $modifiedsince);
-		$start_dt = new DateTime();
-		$start_dt->setTimestamp($start);
-		$end_dt = new DateTime();
-		$end_dt->setTimestamp($end);
-		$exceptions = array();
-		foreach($events as $event){
-			if(isset($event["recurrence"]) && !isset($event["_instance"])){
-				$rec_events = self::get_recurring_events($event, $start_dt, $end_dt);
-				if(is_array($rec_events) && count($rec_events) > 0){
-					$events = array_merge($events, $rec_events);
-				}
-			}
-			if(isset($event["isexception"]) && $event["isexception"] == 1) $exceptions[] = $event["id"];
-		}
-		foreach($exceptions as $exception){
-			for($i=count($events)-1; $i>=0; $i--){
-				if($events[$i]["id"] == $exception && isset($events[$i]["isexception"]) && $events[$i]["isexception"] == 0){
-					unset($events[$i]);
-				}
-			}
-		}
+		$events = caldavsso_dav::get_events($start, $end, $query, $calendar, $virtual, $modifiedsince, $this->rc->config->get('timezone'));
+
 		return $events;
 	}
 
@@ -369,50 +389,6 @@ class caldavsso_driver extends calendar_driver
 	public function user_delete($args){
 		return caldavsso_db::get_instance()->del_user($args['user']->ID);
 	}
-
-    /**
-     * Create instances of a recurring event
-     *
-     * @param array    $event Hash array with event properties
-     * @param DateTime $start Start date of the recurrence window
-     * @param DateTime $end   End date of the recurrence window
-     *
-     * @return array List of recurring event instances
-     */
-    public function get_recurring_events($event, $start, $end = null){
-        $events = [];
-        if(!empty($event['recurrence'])){
-            $rcmail     = rcmail::get_instance();
-            $recurrence = new libcalendaring_recurrence($rcmail->plugins->get_plugin('calendar')->lib, $event);
-            $recurrence_id_format = libcalendaring::recurrence_id_format($event);
-
-            // determine a reasonable end date if none given
-            if(!$end){
-                switch ($event['recurrence']['FREQ']) {
-                case 'YEARLY':  $intvl = 'P100Y'; break;
-                case 'MONTHLY': $intvl = 'P20Y';  break;
-                default:        $intvl = 'P10Y';  break;
-                }
-
-                $end = clone $event['start'];
-                $end->add(new DateInterval($intvl));
-            }
-
-            $i = 0;
-            while($next_event = $recurrence->next_instance()){
-				// add to output if in range
-                if (($next_event['start'] <= $end && $next_event['end'] >= $start)) {
-                    $next_event['_instance'] = $next_event['start']->format($recurrence_id_format);
-                    $next_event['id'] = $next_event['uid'] . '.ics/' . $next_event['_instance'];
-                    $next_event['recurrence_id'] = $event['uid'];
-                    $events[] = $next_event;
-                }
-
-                if($next_event['start'] > $end || ++$i > 1000) break;
-            }
-        }
-        return $events;
-    }
 
 	/**
 	 * Callback function to produce driver-specific calendar create/edit form
