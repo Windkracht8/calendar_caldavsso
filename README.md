@@ -1,15 +1,4 @@
 # calendar_caldavsso
-CalDAV driver for kolab/calendar with SSO option
+This project is moved to codeberg: https://codeberg.org/windkracht8/calendar_caldavsso
 
-You need to manually install this. Copy the files to <roundcube_install>/plugins/calendar/drivers/caldavsso.
-
-Configure the default calendar in config_inc.php.
-
-Configure the calendar to use the driver by setting: $config['calendar_driver'] = "caldavsso";
-
-Enable the calendar plugin.
-
-TODO:
- - Alarms
- - Search in event description
- - Better support for recurring meetings 
+To move your clone: git remote set-url origin https://codeberg.org/windkracht8/calendar_caldavsso.git
